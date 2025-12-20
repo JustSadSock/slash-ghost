@@ -1,0 +1,11 @@
+node_modules
+npm-debug.log*
+dist
+.DS_Store
+cloudflared/*.json
+cloudflared/*.pem
+client/dist
+server/dist
+shared/dist
+.env
+*.log
