@@ -195,6 +195,8 @@ class DuelScene extends Phaser.Scene {
   dashPulse = false;
   ghostPulse = false;
   cam?: Phaser.Cameras.Scene2D.Camera;
+  dead = false;
+  pingEvent?: Phaser.Time.TimerEvent;
 
   constructor(opts: { serverUrl: string; mode: GameMode; ui: UIHandles; playerName?: string }) {
     super('DuelScene');
@@ -207,6 +209,9 @@ class DuelScene extends Phaser.Scene {
   preload() {}
 
   create() {
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => this.teardown());
+    this.events.once(Phaser.Scenes.Events.DESTROY, () => this.teardown());
+
     this.ui.menu.style.display = 'none';
     this.ui.hud.style.display = 'flex';
     this.ui.hudMode.textContent = `Mode ${this.mode}`;
@@ -233,15 +238,17 @@ class DuelScene extends Phaser.Scene {
   }
 
   connect() {
+    if (this.dead) return;
     this.ui.status.textContent = `Connecting to ${this.serverUrl}`;
     const ws = new WebSocket(this.serverUrl);
     this.socket = ws;
     ws.onopen = () => {
+      if (this.dead) return;
       const hello: ClientHelloMessage = { type: 'hello', name: this.name, version: PROTOCOL_VERSION };
       ws.send(JSON.stringify(hello));
       const modeMsg: ClientSetModeMessage = { type: 'setMode', mode: this.mode, version: PROTOCOL_VERSION };
       ws.send(JSON.stringify(modeMsg));
-      this.time.addEvent({ delay: 1000, loop: true, callback: () => this.sendPing() });
+      this.pingEvent = this.time.addEvent({ delay: 1000, loop: true, callback: () => this.sendPing() });
       this.sendTimer = window.setInterval(() => this.sendInput(), 1000 / 60);
     };
     ws.onmessage = (ev) => this.handleMessage(ev.data);
@@ -250,10 +257,38 @@ class DuelScene extends Phaser.Scene {
       this.ui.overlay.textContent = 'Disconnected';
       this.ui.overlay.style.display = 'flex';
       if (this.sendTimer) window.clearInterval(this.sendTimer);
+      if (this.pingEvent) this.pingEvent.remove(false);
     };
   }
 
+  teardown() {
+    if (this.dead) return;
+    this.dead = true;
+    if (this.sendTimer) {
+      window.clearInterval(this.sendTimer);
+      this.sendTimer = undefined;
+    }
+    if (this.pingEvent) {
+      this.pingEvent.remove(false);
+      this.pingEvent.destroy();
+      this.pingEvent = undefined;
+    }
+    if (this.socket) {
+      try {
+        this.socket.onopen = null;
+        this.socket.onmessage = null;
+        this.socket.onerror = null;
+        this.socket.onclose = null;
+        this.socket.close();
+      } catch (e) {
+        console.warn('socket close error', e);
+      }
+      this.socket = undefined;
+    }
+  }
+
   sendPing() {
+    if (this.dead || !this.sys.isActive()) return;
     if (!this.socket || this.socket.readyState !== WebSocket.OPEN) return;
     this.lastPing = performance.now();
     const msg: ClientPingMessage = { type: 'ping', ts: this.lastPing, version: PROTOCOL_VERSION };
@@ -286,6 +321,7 @@ class DuelScene extends Phaser.Scene {
   }
 
   sendInput() {
+    if (this.dead || !this.sys.isActive()) return;
     if (!this.socket || this.socket.readyState !== WebSocket.OPEN) return;
     this.tick += 1;
 
@@ -396,6 +432,7 @@ class DuelScene extends Phaser.Scene {
   }
 
   handleMessage(raw: any) {
+    if (this.dead || !this.sys.isActive()) return;
     const msg = JSON.parse(raw) as ServerMessage & { type: string };
     if ('version' in msg && msg.version !== PROTOCOL_VERSION) {
       this.ui.status.textContent = 'Protocol mismatch';
@@ -465,17 +502,39 @@ class DuelScene extends Phaser.Scene {
   }
 
   renderSnapshot(snapshot: SnapshotMessage) {
+    if (this.dead || !this.sys.isActive()) return;
     this.scoreState = snapshot.scores || this.scoreState;
     this.playerOrder = snapshot.playersOrdered?.length ? snapshot.playersOrdered : this.playerOrder;
 
+    const seenPlayerIds = new Set<string>();
     snapshot.players.forEach((p) => {
+      seenPlayerIds.add(p.id);
       if (p.id === this.playerId) {
         this.lastAuthState = p;
         this.reconcile(p);
       }
-      this.drawPlayer(p);
+      const existing = this.players.get(p.id);
+      this.drawPlayer(p, existing, 0, p.id === this.playerId);
     });
-    snapshot.ghosts.forEach((g) => this.drawGhost(g));
+
+    for (const [id, vis] of Array.from(this.players.entries())) {
+      if (!seenPlayerIds.has(id)) {
+        vis.container.destroy(true);
+        this.players.delete(id);
+      }
+    }
+
+    const seenGhostIds = new Set<string>();
+    snapshot.ghosts.forEach((g) => {
+      seenGhostIds.add(g.id);
+      this.drawGhost(g);
+    });
+    for (const [id, vis] of Array.from(this.ghostEntities.entries())) {
+      if (!seenGhostIds.has(id)) {
+        vis.destroy(true);
+        this.ghostEntities.delete(id);
+      }
+    }
 
     const ordered = this.playerOrder.length ? this.playerOrder : snapshot.players.map((p) => p.id);
     const scores = ordered.map((id) => this.scoreState[id] || 0);
@@ -515,6 +574,7 @@ class DuelScene extends Phaser.Scene {
   }
 
   update(_time: number, delta: number): void {
+    if (this.dead || !this.sys.isActive()) return;
     const dt = delta / 1000;
     this.players.forEach((visual, id) => {
       let state: PlayerState | null = null;
@@ -534,7 +594,7 @@ class DuelScene extends Phaser.Scene {
   }
 
   drawPlayer(state: PlayerState, visual?: PlayerVisual, _dt = 0, isLocal = false) {
-    let vis = visual;
+    let vis = visual ?? this.players.get(state.id);
     if (!vis) {
       const body = this.add.circle(0, 0, 18, 0x5df2ff, 0.95);
       const glow = this.add.circle(0, 0, 30, 0x5df2ff, 0.14);
