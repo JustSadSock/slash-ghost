@@ -1,0 +1,10 @@
+{
+  "name": "slash-ghost",
+  "private": true,
+  "version": "1.0.0",
+  "workspaces": ["client", "server", "shared"],
+  "scripts": {
+    "build": "npm run build -w shared && npm run build -w server && npm run build -w client",
+    "start": "npm run start -w server"
+  }
+}
