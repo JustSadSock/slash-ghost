@@ -47,7 +47,12 @@ cloudflared tunnel --config cloudflared\config.yml run irgri-tunnel
 Keep the two spawned consoles (server + tunnel) open.
 
 ## Cloudflared configuration
-`cloudflared/config.yml` is a template. Update the `credentials-file` path for your Windows user if different. The tunnel exposes `irgri.uk` to `localhost:3000`.
+`cloudflared/config.yml` is a template. Update the `credentials-file` path for your Windows user if different. The tunnel exposes `irgri.uk` to `127.0.0.1:3000` and disables IPv6 "happy eyeballs" to avoid Windows loopback issues. After starting the server you can verify connectivity with:
+
+```bash
+curl http://127.0.0.1:3000/health
+curl https://irgri.uk/health
+```
 
 ## Client deployment (Netlify)
 - Netlify build command: `npm run build`
