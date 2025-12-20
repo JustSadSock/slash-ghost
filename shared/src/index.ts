@@ -54,6 +54,7 @@ export type PlayerState = {
   chargeTime: number;
   isDead: boolean;
   ghostEnergy: number;
+  lastClientTickProcessed?: number;
 };
 
 export type GhostState = {

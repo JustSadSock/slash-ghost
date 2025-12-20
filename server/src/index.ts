@@ -27,6 +27,15 @@ const SNAPSHOT_RATE = GAME_CONSTANTS.snapshotRate;
 const MS_PER_TICK = 1000 / TICK_RATE;
 const MAX_INPUT_BUFFER = TICK_RATE * GAME_CONSTANTS.ghostDelay;
 
+const neutralInput: InputRecord = {
+  tick: 0,
+  moveX: 0,
+  moveY: 0,
+  buttons: { attack: false, shield: false, dash: false, ghost: false },
+  aimAngle: 0,
+  charge: false,
+};
+
 function seededRandom(seed: number) {
   return () => {
     seed = (seed * 1664525 + 1013904223) % 4294967296;
@@ -54,7 +63,10 @@ class Player {
   isDead = false;
   ghostEnergy = GAME_CONSTANTS.manaMax;
   mode: GameMode = 'A';
-  inputBuffer: InputRecord[] = [];
+  latestInput: InputRecord = { ...neutralInput };
+  inputHistory: InputRecord[] = [];
+  positionHistory: Vector2[] = [];
+  lastClientTickProcessed = 0;
   replayGhost?: Ghost;
   possessReady = false;
 
@@ -135,7 +147,10 @@ class Room {
         p.replayGhost.active = p.mode === 'B';
         p.replayGhost.respawnTimer = 0;
       }
-      p.inputBuffer = [];
+      p.inputHistory = [];
+      p.positionHistory = [];
+      p.latestInput = { ...neutralInput };
+      p.lastClientTickProcessed = 0;
     });
     this.broadcast({
       type: 'roundStart',
@@ -190,8 +205,8 @@ class Room {
       p.shieldDurability = clamp(p.shieldDurability + dt * 3, 0, GAME_CONSTANTS.shieldDurability);
     }
 
-    const buf = p.inputBuffer.shift();
-    if (!buf) return;
+    const buf = p.latestInput ?? neutralInput;
+    p.lastClientTickProcessed = buf.tick;
     p.aimAngle = buf.aimAngle;
     p.charging = buf.charge && !p.isDead;
     if (p.charging) p.chargeTime += dt; else p.chargeTime = 0;
@@ -206,8 +221,8 @@ class Room {
     }
 
     p.velocity = { x: dir.x * speed, y: dir.y * speed };
-    p.position.x += p.velocity.x;
-    p.position.y += p.velocity.y;
+    p.position.x += p.velocity.x * dt;
+    p.position.y += p.velocity.y * dt;
     this.resolveObstacles(p);
 
     if (!p.isDead) {
@@ -221,6 +236,11 @@ class Room {
     if (p.mode === 'C' && p.replayGhost) {
       if (p.replayGhost.active && p.ghostEnergy <= 0) p.replayGhost.active = false;
     }
+
+    p.inputHistory.push({ ...buf });
+    if (p.inputHistory.length > MAX_INPUT_BUFFER) p.inputHistory.shift();
+    p.positionHistory.push({ ...p.position });
+    if (p.positionHistory.length > MAX_INPUT_BUFFER) p.positionHistory.shift();
   }
 
   resolveObstacles(p: Player) {
@@ -280,11 +300,12 @@ class Room {
     const ghost = this.getGhost(p);
     if (!ghost) return;
     if (p.mode === 'A') {
-      if (p.inputBuffer.length >= MAX_INPUT_BUFFER) {
-        ghost.replayQueue = p.inputBuffer.slice(0, MAX_INPUT_BUFFER);
+      if (p.inputHistory.length >= MAX_INPUT_BUFFER) {
+        ghost.replayQueue = p.inputHistory.slice(-MAX_INPUT_BUFFER);
         ghost.replayIndex = 0;
         ghost.active = true;
-        ghost.position = { ...p.position };
+        const rewindIndex = Math.max(0, p.positionHistory.length - MAX_INPUT_BUFFER);
+        ghost.position = { ...(p.positionHistory[rewindIndex] || p.position) };
       }
     } else if (p.mode === 'C') {
       if (p.ghostEnergy > 0) ghost.active = !ghost.active;
@@ -302,14 +323,14 @@ class Room {
           }
         }
         if (!g.active) return;
-        // delay playback of owner buffer
-        const buffer = g.owner.inputBuffer;
+        // delay playback of owner history
+        const buffer = g.owner.inputHistory;
         const delayedIndex = Math.max(0, buffer.length - Math.floor(GAME_CONSTANTS.ghostDelay * TICK_RATE));
         const input = buffer[delayedIndex];
         if (input) this.stepGhostWithInput(g, input, dt);
       } else if (g.owner.mode === 'C') {
         if (g.active && g.owner.ghostEnergy > 0) {
-          const buffer = g.owner.inputBuffer;
+          const buffer = g.owner.inputHistory;
           const delayedIndex = Math.max(0, buffer.length - Math.floor(GAME_CONSTANTS.ghostDelay * TICK_RATE));
           const input = buffer[delayedIndex];
           if (input) this.stepGhostWithInput(g, input, dt);
@@ -330,8 +351,8 @@ class Room {
     const dir = normalize({ x: input.moveX, y: input.moveY });
     const speed = GAME_CONSTANTS.moveSpeed * 0.9;
     g.velocity = { x: dir.x * speed, y: dir.y * speed };
-    g.position.x += g.velocity.x;
-    g.position.y += g.velocity.y;
+    g.position.x += g.velocity.x * dt;
+    g.position.y += g.velocity.y * dt;
   }
 
   registerAttack(attacker: Player) {
@@ -421,6 +442,7 @@ class Room {
       chargeTime: p.chargeTime,
       isDead: p.isDead,
       ghostEnergy: p.ghostEnergy,
+      lastClientTickProcessed: p.lastClientTickProcessed,
     }));
   }
 
@@ -491,11 +513,10 @@ function handleClient(ws: WebSocket) {
             moveX: clamp(imsg.moveX, -1, 1),
             moveY: clamp(imsg.moveY, -1, 1),
             buttons: imsg.buttons,
-            aimAngle: imsg.aimAngle,
+            aimAngle: clamp(imsg.aimAngle, -Math.PI, Math.PI),
             charge: imsg.charge,
           };
-          player.inputBuffer.push(rec);
-          if (player.inputBuffer.length > MAX_INPUT_BUFFER * 2) player.inputBuffer.shift();
+          player.latestInput = rec;
           break;
         case 'ping':
           ws.send(JSON.stringify({ type: 'pong', ts: (msg as ClientPingMessage).ts, version: PROTOCOL_VERSION }));
