@@ -13,6 +13,7 @@ import {
 } from '@slash-ghost/shared';
 
 const DEFAULT_SERVER = 'wss://irgri.uk/ws';
+const INTERPOLATION_TICKS = 6;
 
 function normalizeServerUrl(url: string, enforceSecure: boolean): string {
   try {
@@ -39,35 +40,46 @@ function clamp(v: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, v));
 }
 
+function normalize(x: number, y: number) {
+  const len = Math.hypot(x, y) || 1;
+  return { x: x / len, y: y / len };
+}
+
 function createStyle() {
   const style = document.createElement('style');
   style.textContent = `
   :root {
-    --panel: rgba(12,12,20,0.88);
-    --accent: #6cf0ff;
-    --accent-2: #ff69b4;
+    --panel: rgba(6,8,20,0.9);
+    --accent: #5df2ff;
+    --accent-2: #ff7ddf;
+    --bg: radial-gradient(circle at 20% 20%, rgba(111,124,255,0.14), transparent 35%),
+          radial-gradient(circle at 80% 30%, rgba(93,242,255,0.14), transparent 40%),
+          #05070f;
     --text: #e9f2ff;
   }
+  body { margin: 0; background: var(--bg); overflow: hidden; }
   #ui-root { position: fixed; inset: 0; pointer-events: none; font-family: 'Inter', system-ui, sans-serif; color: var(--text); }
-  .menu-card { pointer-events: auto; max-width: 380px; margin: 60px auto; padding: 20px 24px; background: var(--panel); border: 1px solid #1f2a44; border-radius: 12px; box-shadow: 0 10px 30px rgba(0,0,0,0.45); }
-  .menu-title { font-size: 28px; margin: 0 0 12px 0; letter-spacing: 1px; text-align: center; }
+  .menu-card { pointer-events: auto; max-width: 420px; margin: 60px auto; padding: 22px 26px; background: var(--panel); border: 1px solid #1a2440; border-radius: 14px; box-shadow: 0 14px 40px rgba(0,0,0,0.55); }
+  .menu-title { font-size: 30px; margin: 0 0 12px 0; letter-spacing: 1px; text-align: center; }
   .menu-field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }
-  .menu-field label { font-size: 13px; text-transform: uppercase; letter-spacing: 0.05em; color: #9fb7d6; }
-  .menu-field input, .menu-field select { padding: 10px 12px; border-radius: 8px; border: 1px solid #27324d; background: #0d1628; color: var(--text); }
+  .menu-field label { font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; color: #9fb7d6; }
+  .menu-field input, .menu-field select { padding: 11px 12px; border-radius: 10px; border: 1px solid #27324d; background: #0b1221; color: var(--text); }
   .menu-actions { display: flex; gap: 12px; align-items: center; justify-content: space-between; }
   .menu-actions button { flex: 1; padding: 12px; border: none; border-radius: 10px; background: linear-gradient(135deg, #38d9ff, #6f7cff); color: #05080f; font-weight: 700; cursor: pointer; transition: transform 120ms ease, box-shadow 120ms ease; }
+  .menu-actions button.secondary { background: #11182c; color: var(--text); border: 1px solid #24314d; }
   .menu-actions button:hover { transform: translateY(-1px); box-shadow: 0 6px 18px rgba(111,124,255,0.35); }
   #status { font-size: 13px; color: #b7c9ff; text-align: center; margin-top: 10px; }
   #hud { position: absolute; inset: 0; display: flex; flex-direction: column; justify-content: space-between; pointer-events: none; padding: 14px; }
   #hud .top-row { display: flex; justify-content: space-between; align-items: center; }
-  #hud .meters { display: flex; gap: 10px; align-items: center; }
+  #hud .meters { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
   .pip { width: 12px; height: 12px; border-radius: 50%; border: 1px solid #88d4ff; background: rgba(136,212,255,0.3); }
   .pip.empty { background: rgba(255,255,255,0.08); border-color: #5a6a84; }
-  .bar { position: relative; width: 160px; height: 12px; border-radius: 8px; background: rgba(255,255,255,0.08); overflow: hidden; border: 1px solid #1f2a44; }
+  .bar { position: relative; width: 180px; height: 12px; border-radius: 8px; background: rgba(255,255,255,0.08); overflow: hidden; border: 1px solid #1f2a44; }
   .bar .fill { position: absolute; inset: 0; background: linear-gradient(90deg, var(--accent), #9d7bff); transform-origin: left center; }
   .bar.super::after { content: 'SUPER'; position: absolute; right: 4px; top: -18px; font-size: 10px; color: #ffd166; }
   .score { font-weight: 700; letter-spacing: 0.08em; }
   #hud .mode { font-size: 12px; color: #a8b8db; }
+  #overlay { position: absolute; inset: 0; display: none; align-items: center; justify-content: center; pointer-events: none; font-size: 22px; color: #c8d6ff; background: rgba(6,8,16,0.35); }
   `;
   document.head.appendChild(style);
 }
@@ -105,8 +117,11 @@ function createUI() {
         <div class="bar super" id="charge"><div class="fill" style="transform:scaleX(0)"></div></div>
         <div class="bar" id="mana" style="display:none;"><div class="fill" style="transform:scaleX(1)"></div></div>
         <div id="shield"></div>
+        <div class="mode" id="ping">Ping: --</div>
+        <button class="secondary" id="back" style="pointer-events:auto; padding:8px 10px;">Back to menu</button>
       </div>
     </div>
+    <div id="overlay">Waiting for opponent…</div>
   `;
   document.body.appendChild(root);
   const status = root.querySelector('#status') as HTMLDivElement;
@@ -121,7 +136,10 @@ function createUI() {
   const dash = root.querySelector('#dash .fill') as HTMLDivElement;
   const charge = root.querySelector('#charge .fill') as HTMLDivElement;
   const mana = root.querySelector('#mana') as HTMLDivElement;
-  return { root, status, play, menu, hud, serverInput, modeSelect, score, hudMode, shield, dash, charge, mana };
+  const ping = root.querySelector('#ping') as HTMLDivElement;
+  const overlay = root.querySelector('#overlay') as HTMLDivElement;
+  const back = root.querySelector('#back') as HTMLButtonElement;
+  return { root, status, play, menu, hud, serverInput, modeSelect, score, hudMode, shield, dash, charge, mana, ping, overlay, back };
 }
 
 type UIHandles = ReturnType<typeof createUI>;
@@ -129,31 +147,54 @@ type UIHandles = ReturnType<typeof createUI>;
 type PlayerVisual = {
   container: Phaser.GameObjects.Container;
   body: Phaser.GameObjects.Arc;
-  aim: Phaser.GameObjects.Line;
+  blade: Phaser.GameObjects.Line;
   glow: Phaser.GameObjects.Arc;
   shield: Phaser.GameObjects.Arc;
+};
+
+type PendingInput = { tick: number; msg: ClientInputMessage };
+
+type PredictedState = {
+  position: Phaser.Math.Vector2;
+  velocity: Phaser.Math.Vector2;
+  aimAngle: number;
+  dashCooldown: number;
+  dashTimer: number;
+  charging: boolean;
+  chargeTime: number;
+  attackCooldown: number;
 };
 
 class DuelScene extends Phaser.Scene {
   socket?: WebSocket;
   playerId = '';
   mode: GameMode = 'A';
-  connected = false;
   tick = 0;
-  lastSnapshotTick = 0;
+  latestServerTick = 0;
+  snapshotBuffer: SnapshotMessage[] = [];
   players: Map<string, PlayerVisual> = new Map();
   ghostEntities: Map<string, Phaser.GameObjects.Container> = new Map();
   inputState = { moveX: 0, moveY: 0, buttons: { attack: false, shield: false, dash: false, ghost: false }, charge: false, aim: 0 };
-  scores: Record<string, number> = {};
+  pendingInputs: PendingInput[] = [];
+  predicted?: PredictedState;
+  lastAuthState?: PlayerState;
   lastPing = 0;
   ping = 0;
   serverUrl: string;
   name = 'Ronin';
   sendTimer?: number;
-  targetPositions: Map<string, Phaser.Math.Vector2> = new Map();
-  stateCache: Map<string, PlayerState> = new Map();
+  interpolationDelay = INTERPOLATION_TICKS;
   ui: UIHandles;
-  infoText?: Phaser.GameObjects.Text;
+  playerOrder: string[] = [];
+  scoreState: Record<string, number> = {};
+  pointerWorld = new Phaser.Math.Vector2();
+  chargeStart = 0;
+  chargeActive = false;
+  attackPulse = false;
+  queuedChargeAttack = false;
+  dashPulse = false;
+  ghostPulse = false;
+  cam?: Phaser.Cameras.Scene2D.Camera;
 
   constructor(opts: { serverUrl: string; mode: GameMode; ui: UIHandles; playerName?: string }) {
     super('DuelScene');
@@ -169,27 +210,25 @@ class DuelScene extends Phaser.Scene {
     this.ui.menu.style.display = 'none';
     this.ui.hud.style.display = 'flex';
     this.ui.hudMode.textContent = `Mode ${this.mode}`;
-    this.infoText = this.add.text(10, 10, 'Connecting...', { color: '#fff' });
+    this.ui.overlay.style.display = 'flex';
+
+    const grid = this.add.grid(640, 360, 1600, 1200, 64, 64, 0x0b1024, 0.15, 0x1a2644, 0.25);
+    grid.setBlendMode(Phaser.BlendModes.ADD);
+    const vignette = this.add.rectangle(640, 360, 1600, 1200, 0x000000, 0.25);
+    vignette.setStrokeStyle(3, 0x1a1f35, 0.35);
+
+    this.cam = this.cameras.main;
+    this.cam.setBackgroundColor('#05070f');
+
     this.input.keyboard?.on('keydown', (e: KeyboardEvent) => this.handleKey(e, true));
     this.input.keyboard?.on('keyup', (e: KeyboardEvent) => this.handleKey(e, false));
     this.input.on('pointermove', (pointer: Phaser.Input.Pointer) => {
-      const center = { x: this.scale.width / 2, y: this.scale.height / 2 };
-      this.inputState.aim = Math.atan2(pointer.worldY - center.y, pointer.worldX - center.x);
+      this.pointerWorld.set(pointer.worldX, pointer.worldY);
+      this.updateAim();
     });
-    this.input.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
-      if (pointer.rightButtonDown()) this.inputState.buttons.shield = true;
-      else {
-        this.inputState.buttons.attack = true;
-        this.spawnSlashEffect(this.playerId);
-      }
-    });
-    this.input.on('pointerup', (pointer: Phaser.Input.Pointer) => {
-      if (pointer.wasTouch) {
-        this.inputState.buttons.attack = false;
-        this.inputState.buttons.shield = false;
-      } else if (pointer.rightButtonReleased()) this.inputState.buttons.shield = false;
-      else this.inputState.buttons.attack = false;
-    });
+    this.input.on('pointerdown', (pointer: Phaser.Input.Pointer) => this.handlePointerDown(pointer));
+    this.input.on('pointerup', (pointer: Phaser.Input.Pointer) => this.handlePointerUp(pointer));
+
     this.connect();
   }
 
@@ -198,7 +237,6 @@ class DuelScene extends Phaser.Scene {
     const ws = new WebSocket(this.serverUrl);
     this.socket = ws;
     ws.onopen = () => {
-      this.connected = true;
       const hello: ClientHelloMessage = { type: 'hello', name: this.name, version: PROTOCOL_VERSION };
       ws.send(JSON.stringify(hello));
       const modeMsg: ClientSetModeMessage = { type: 'setMode', mode: this.mode, version: PROTOCOL_VERSION };
@@ -208,8 +246,9 @@ class DuelScene extends Phaser.Scene {
     };
     ws.onmessage = (ev) => this.handleMessage(ev.data);
     ws.onclose = () => {
-      this.connected = false;
       this.ui.status.textContent = 'Disconnected';
+      this.ui.overlay.textContent = 'Disconnected';
+      this.ui.overlay.style.display = 'flex';
       if (this.sendTimer) window.clearInterval(this.sendTimer);
     };
   }
@@ -221,62 +260,170 @@ class DuelScene extends Phaser.Scene {
     this.socket.send(JSON.stringify(msg));
   }
 
+  handlePointerDown(pointer: Phaser.Input.Pointer) {
+    if (pointer.rightButtonDown()) {
+      this.inputState.buttons.shield = true;
+      return;
+    }
+    this.chargeActive = true;
+    this.inputState.charge = true;
+    this.chargeStart = performance.now();
+  }
+
+  handlePointerUp(pointer: Phaser.Input.Pointer) {
+    if (pointer.rightButtonReleased()) {
+      this.inputState.buttons.shield = false;
+      return;
+    }
+    const held = performance.now() - this.chargeStart;
+    if (held > 150) {
+      this.queuedChargeAttack = true;
+    } else {
+      this.attackPulse = true;
+    }
+    this.chargeActive = false;
+    this.inputState.charge = false;
+  }
+
   sendInput() {
     if (!this.socket || this.socket.readyState !== WebSocket.OPEN) return;
     this.tick += 1;
+
+    const buttons = {
+      attack: this.attackPulse || this.queuedChargeAttack,
+      shield: this.inputState.buttons.shield,
+      dash: this.dashPulse,
+      ghost: this.ghostPulse,
+    };
+
     const msg: ClientInputMessage = {
       type: 'input',
       tick: this.tick,
       aimAngle: this.inputState.aim,
       moveX: clamp(this.inputState.moveX, -1, 1),
       moveY: clamp(this.inputState.moveY, -1, 1),
-      buttons: { ...this.inputState.buttons },
-      charge: this.inputState.charge,
+      buttons,
+      charge: this.chargeActive || this.queuedChargeAttack,
       version: PROTOCOL_VERSION,
     };
+
     this.socket.send(JSON.stringify(msg));
+    this.pendingInputs.push({ tick: this.tick, msg });
+    this.applyLocalPrediction(msg);
+
+    this.attackPulse = false;
+    this.dashPulse = false;
+    this.ghostPulse = false;
+    if (this.queuedChargeAttack) {
+      this.queuedChargeAttack = false;
+      this.attackPulse = false;
+      this.chargeActive = false;
+      this.inputState.charge = false;
+    }
+  }
+
+  applyLocalPrediction(msg: ClientInputMessage) {
+    if (!this.predicted) return;
+    const dt = 1 / 60;
+    this.predicted.attackCooldown = Math.max(0, this.predicted.attackCooldown - dt);
+    this.predicted.dashCooldown = Math.max(0, this.predicted.dashCooldown - dt);
+    this.predicted.dashTimer = Math.max(0, this.predicted.dashTimer - dt);
+
+    if (msg.charge) {
+      this.predicted.charging = true;
+      this.predicted.chargeTime += dt;
+    } else {
+      this.predicted.charging = false;
+      this.predicted.chargeTime = 0;
+    }
+
+    if (msg.buttons.dash && this.predicted.dashCooldown <= 0) {
+      this.predicted.dashCooldown = GAME_CONSTANTS.dashCooldown;
+      this.predicted.dashTimer = GAME_CONSTANTS.dashDuration;
+    }
+
+    if (msg.buttons.attack && this.predicted.attackCooldown <= 0) {
+      if (this.predicted.charging) {
+        const bonus = Math.min(this.predicted.chargeTime, GAME_CONSTANTS.superThreshold);
+        const dashBoost = 20 * (bonus / GAME_CONSTANTS.superThreshold);
+        this.predicted.position.x += Math.cos(msg.aimAngle) * dashBoost;
+        this.predicted.position.y += Math.sin(msg.aimAngle) * dashBoost;
+      }
+      this.predicted.attackCooldown = GAME_CONSTANTS.attackCooldown;
+      this.predicted.charging = false;
+      this.predicted.chargeTime = 0;
+    }
+
+    let speed = GAME_CONSTANTS.moveSpeed;
+    if (this.predicted.charging) speed *= GAME_CONSTANTS.chargeSlow;
+    let dir = normalize(msg.moveX, msg.moveY);
+    if (this.predicted.dashTimer > 0) {
+      dir = normalize(Math.cos(msg.aimAngle), Math.sin(msg.aimAngle));
+      speed = GAME_CONSTANTS.dashSpeed;
+    }
+    this.predicted.aimAngle = msg.aimAngle;
+    this.predicted.velocity.set(dir.x * speed, dir.y * speed);
+    this.predicted.position.x += this.predicted.velocity.x * dt;
+    this.predicted.position.y += this.predicted.velocity.y * dt;
   }
 
   handleKey(e: KeyboardEvent, down: boolean) {
     switch (e.code) {
       case 'KeyW':
-        this.inputState.moveY = down ? -1 : 0;
+        this.inputState.moveY = down ? -1 : this.inputState.moveY === -1 ? 0 : this.inputState.moveY;
         break;
       case 'KeyS':
-        this.inputState.moveY = down ? 1 : 0;
+        this.inputState.moveY = down ? 1 : this.inputState.moveY === 1 ? 0 : this.inputState.moveY;
         break;
       case 'KeyA':
-        this.inputState.moveX = down ? -1 : 0;
+        this.inputState.moveX = down ? -1 : this.inputState.moveX === -1 ? 0 : this.inputState.moveX;
         break;
       case 'KeyD':
-        this.inputState.moveX = down ? 1 : 0;
+        this.inputState.moveX = down ? 1 : this.inputState.moveX === 1 ? 0 : this.inputState.moveX;
         break;
       case 'ShiftLeft':
-        this.inputState.buttons.dash = down;
+        if (down) this.dashPulse = true;
         break;
       case 'Space':
-        this.inputState.buttons.ghost = down;
-        break;
-      case 'ArrowUp':
-        this.inputState.charge = down;
+        if (down) this.ghostPulse = true;
         break;
     }
   }
 
+  updateAim() {
+    if (!this.predicted) return;
+    this.inputState.aim = Math.atan2(this.pointerWorld.y - this.predicted.position.y, this.pointerWorld.x - this.predicted.position.x);
+  }
+
   handleMessage(raw: any) {
     const msg = JSON.parse(raw) as ServerMessage & { type: string };
+    if ('version' in msg && msg.version !== PROTOCOL_VERSION) {
+      this.ui.status.textContent = 'Protocol mismatch';
+      this.ui.overlay.textContent = 'Protocol mismatch';
+      this.ui.overlay.style.display = 'flex';
+      this.socket?.close();
+      return;
+    }
     switch (msg.type) {
       case 'welcome':
         this.playerId = (msg as any).playerId;
         this.ui.status.textContent = `Joined as ${this.playerId}`;
+        if ((msg as any).players) {
+          this.playerOrder = (msg as any).players.map((p: PlayerState) => p.id);
+        }
+        break;
+      case 'matchStart':
+        this.playerOrder = (msg as any).players?.map((p: PlayerState) => p.id) || this.playerOrder;
         break;
       case 'snapshot':
-        this.lastSnapshotTick = (msg as SnapshotMessage).tick;
+        this.latestServerTick = (msg as SnapshotMessage).tick;
+        this.snapshotBuffer.push(msg as SnapshotMessage);
+        if (this.snapshotBuffer.length > 60) this.snapshotBuffer.shift();
         this.renderSnapshot(msg as SnapshotMessage);
         break;
       case 'event':
         if ((msg as any).event === 'roundEnd') {
-          this.scores = (msg as any).payload.scores;
+          this.scoreState = (msg as any).payload.scores;
         }
         if ((msg as any).event === 'parry') {
           const payload = (msg as any).payload;
@@ -285,53 +432,134 @@ class DuelScene extends Phaser.Scene {
         break;
       case 'pong':
         this.ping = performance.now() - (msg as any).ts;
+        this.ui.ping.textContent = `Ping: ${Math.round(this.ping)}ms`;
         break;
     }
   }
 
-  renderSnapshot(snapshot: SnapshotMessage) {
-    snapshot.players.forEach((p) => {
-      this.stateCache.set(p.id, p);
-      this.targetPositions.set(p.id, new Phaser.Math.Vector2(p.position.x, p.position.y));
-      this.drawPlayer(p);
-    });
-    snapshot.ghosts.forEach((g) => this.drawGhost(g));
-    const values = Object.values(this.scores);
-    this.ui.score.textContent = `Round: ${snapshot.tick} | Score: ${values.join(' - ') || '0 - 0'} | Ping ${Math.round(this.ping)}ms`;
-    const playerState = this.stateCache.get(this.playerId);
-    if (playerState) {
-      this.updateHud(playerState);
+  reconcile(localState: PlayerState) {
+    if (!this.predicted) {
+      this.predicted = {
+        position: new Phaser.Math.Vector2(localState.position.x, localState.position.y),
+        velocity: new Phaser.Math.Vector2(localState.velocity.x, localState.velocity.y),
+        aimAngle: localState.aimAngle,
+        dashCooldown: localState.dashCooldown,
+        dashTimer: 0,
+        charging: localState.charging,
+        chargeTime: localState.chargeTime,
+        attackCooldown: 0,
+      };
+    }
+    if (localState.lastClientTickProcessed == null) return;
+    this.predicted.position.set(localState.position.x, localState.position.y);
+    this.predicted.velocity.set(localState.velocity.x, localState.velocity.y);
+    this.predicted.aimAngle = localState.aimAngle;
+    this.predicted.chargeTime = localState.chargeTime;
+    this.predicted.charging = localState.charging;
+    this.predicted.dashCooldown = localState.dashCooldown;
+
+    this.pendingInputs = this.pendingInputs.filter((p) => p.tick > (localState.lastClientTickProcessed || 0));
+    for (const pending of this.pendingInputs) {
+      this.applyLocalPrediction(pending.msg);
     }
   }
 
-  drawPlayer(state: PlayerState) {
-    let visual = this.players.get(state.id);
-    if (!visual) {
-      const body = this.add.circle(0, 0, 18, 0x00ffcc, 0.9);
-      const glow = this.add.circle(0, 0, 26, 0x6cf0ff, 0.18);
-      const aim = this.add.line(0, 0, 0, 0, 28, 0, 0xffffff, 0.9);
-      const shield = this.add.circle(0, 0, 24, 0xffffff, 0.12);
-      const container = this.add.container(state.position.x, state.position.y, [glow, body, shield, aim]);
-      visual = { container, body, aim, glow, shield };
-      this.players.set(state.id, visual);
-    }
-    const target = this.targetPositions.get(state.id);
-    if (target) {
-      // Smooth position
-      const current = visual.container;
-      current.x = Phaser.Math.Linear(current.x, target.x, 0.18);
-      current.y = Phaser.Math.Linear(current.y, target.y, 0.18);
+  renderSnapshot(snapshot: SnapshotMessage) {
+    this.scoreState = snapshot.scores || this.scoreState;
+    this.playerOrder = snapshot.playersOrdered?.length ? snapshot.playersOrdered : this.playerOrder;
+
+    snapshot.players.forEach((p) => {
+      if (p.id === this.playerId) {
+        this.lastAuthState = p;
+        this.reconcile(p);
+      }
+      this.drawPlayer(p);
+    });
+    snapshot.ghosts.forEach((g) => this.drawGhost(g));
+
+    const ordered = this.playerOrder.length ? this.playerOrder : snapshot.players.map((p) => p.id);
+    const scores = ordered.map((id) => this.scoreState[id] || 0);
+    this.ui.score.textContent = `Round: ${snapshot.round} | Score: ${scores.join(' - ')} | Ping ${Math.round(this.ping)}ms`;
+    const playerState = this.lastAuthState;
+    if (playerState) {
+      this.updateHud(playerState);
     }
 
-    const aimAngle = state.id === this.playerId ? this.inputState.aim : state.aimAngle;
-    const len = 30;
-    visual.aim.setTo(0, 0, Math.cos(aimAngle) * len, Math.sin(aimAngle) * len);
-    visual.body.setFillStyle(state.isDead ? 0x444444 : 0x00ffcc, state.id === this.playerId ? 1 : 0.7);
-    visual.shield.setVisible(state.shieldUp);
-    visual.shield.setScale(1 + Math.max(0, (state.shieldDurability - 1) * 0.08));
-    visual.shield.setFillStyle(0x88d4ff, state.shieldUp ? 0.18 : 0);
-    const glowAlpha = state.charging ? 0.32 : 0.18;
-    visual.glow.setFillStyle(0x6cf0ff, glowAlpha + Math.min(state.chargeTime, 1) * 0.1);
+    const waiting = snapshot.players.length < 2;
+    this.ui.overlay.style.display = waiting ? 'flex' : 'none';
+  }
+
+  interpolatePlayer(id: string) {
+    const renderTick = this.latestServerTick - this.interpolationDelay;
+    let prev: { snap: SnapshotMessage; state: PlayerState } | null = null;
+    let next: { snap: SnapshotMessage; state: PlayerState } | null = null;
+    for (const snap of this.snapshotBuffer) {
+      const state = snap.players.find((p) => p.id === id);
+      if (!state) continue;
+      if (snap.tick <= renderTick) prev = { snap, state };
+      if (snap.tick >= renderTick) {
+        next = { snap, state };
+        break;
+      }
+    }
+    if (!prev && next) prev = next;
+    if (!next && prev) next = prev;
+    if (!prev || !next) return null;
+    const t = clamp((renderTick - prev.snap.tick) / Math.max(1, next.snap.tick - prev.snap.tick), 0, 1);
+    const lerpPos = new Phaser.Math.Vector2(
+      Phaser.Math.Linear(prev.state.position.x, next.state.position.x, t),
+      Phaser.Math.Linear(prev.state.position.y, next.state.position.y, t)
+    );
+    const aim = Phaser.Math.Angle.ShortestBetween(prev.state.aimAngle, next.state.aimAngle) * t + prev.state.aimAngle;
+    return { ...next.state, position: { x: lerpPos.x, y: lerpPos.y }, aimAngle: aim } as PlayerState;
+  }
+
+  update(_time: number, delta: number): void {
+    const dt = delta / 1000;
+    this.players.forEach((visual, id) => {
+      let state: PlayerState | null = null;
+      if (id === this.playerId && this.predicted) {
+        state = {
+          ...(this.lastAuthState || ({} as PlayerState)),
+          position: { x: this.predicted.position.x, y: this.predicted.position.y },
+          velocity: { x: this.predicted.velocity.x, y: this.predicted.velocity.y },
+          aimAngle: this.predicted.aimAngle,
+        } as PlayerState;
+      } else {
+        state = this.interpolatePlayer(id) || this.lastAuthState || null;
+      }
+      if (!state) return;
+      this.drawPlayer(state, visual, dt, id === this.playerId);
+    });
+  }
+
+  drawPlayer(state: PlayerState, visual?: PlayerVisual, _dt = 0, isLocal = false) {
+    let vis = visual;
+    if (!vis) {
+      const body = this.add.circle(0, 0, 18, 0x5df2ff, 0.95);
+      const glow = this.add.circle(0, 0, 30, 0x5df2ff, 0.14);
+      const blade = this.add.line(0, 0, 0, 0, 42, 0, 0xffffff, 0.9);
+      const shield = this.add.circle(0, 0, 28, 0xffffff, 0.12);
+      const container = this.add.container(state.position.x, state.position.y, [glow, body, shield, blade]);
+      container.setDepth(10);
+      vis = { container, body, blade, glow, shield };
+      this.players.set(state.id, vis);
+      if (isLocal && this.cam) {
+        this.cam.startFollow(container, true, 0.12, 0.12);
+      }
+    }
+
+    vis.container.x = state.position.x;
+    vis.container.y = state.position.y;
+
+    const aimAngle = isLocal ? this.inputState.aim : state.aimAngle;
+    const len = 38;
+    vis.blade.setTo(0, 0, Math.cos(aimAngle) * len, Math.sin(aimAngle) * len);
+    vis.body.setFillStyle(state.isDead ? 0x303848 : 0x5df2ff, isLocal ? 1 : 0.7);
+    vis.shield.setVisible(state.shieldUp);
+    vis.shield.setScale(1 + Math.max(0, (state.shieldDurability - 1) * 0.08));
+    vis.shield.setFillStyle(0x88d4ff, state.shieldUp ? 0.18 : 0);
+    vis.glow.setFillStyle(0x5df2ff, state.charging ? 0.28 : 0.16);
   }
 
   drawGhost(g: any) {
@@ -344,30 +572,6 @@ class DuelScene extends Phaser.Scene {
     }
     c.setPosition(g.position.x, g.position.y);
     c.setAlpha(g.active ? 0.6 : 0.25);
-  }
-
-  update(_time: number, delta: number): void {
-    this.players.forEach((visual, id) => {
-      const state = this.stateCache.get(id);
-      if (!state) return;
-      if (id === this.playerId && this.socket?.readyState === WebSocket.OPEN) {
-        const dt = delta / 1000;
-        const dir = new Phaser.Math.Vector2(this.inputState.moveX, this.inputState.moveY).normalize();
-        const speed = state.charging ? GAME_CONSTANTS.moveSpeed * GAME_CONSTANTS.chargeSlow : GAME_CONSTANTS.moveSpeed;
-        visual.container.x += dir.x * speed * dt;
-        visual.container.y += dir.y * speed * dt;
-      }
-    });
-  }
-
-  spawnSlashEffect(playerId: string) {
-    const visual = this.players.get(playerId);
-    if (!visual) return;
-    const gfx = this.add.graphics({ x: visual.container.x, y: visual.container.y });
-    gfx.fillStyle(0xffffff, 0.4);
-    gfx.slice(0, 0, 36, this.inputState.aim - Math.PI / 5, this.inputState.aim + Math.PI / 5, false);
-    gfx.fillPath();
-    this.tweens.add({ targets: gfx, alpha: 0, scale: 1.3, duration: 200, onComplete: () => gfx.destroy() });
   }
 
   parryFlash(targetId: string) {
@@ -388,7 +592,7 @@ class DuelScene extends Phaser.Scene {
     }
     const dashPct = clamp(1 - state.dashCooldown / GAME_CONSTANTS.dashCooldown, 0, 1);
     this.ui.dash.style.transform = `scaleX(${dashPct})`;
-    const chargePct = clamp(state.chargeTime / GAME_CONSTANTS.superThreshold, 0, 1);
+    const chargePct = clamp((this.predicted?.chargeTime ?? state.chargeTime) / GAME_CONSTANTS.superThreshold, 0, 1);
     this.ui.charge.style.transform = `scaleX(${chargePct})`;
     if (this.mode === 'C') {
       this.ui.mana.style.display = 'block';
@@ -405,11 +609,17 @@ const ui = createUI();
 
 const config: Phaser.Types.Core.GameConfig = {
   type: Phaser.AUTO,
-  width: 1024,
-  height: 768,
+  width: 1280,
+  height: 720,
   parent: 'app',
   physics: { default: 'arcade' },
-  backgroundColor: '#0b0c10',
+  backgroundColor: '#05070f',
+  scale: {
+    mode: Phaser.Scale.FIT,
+    autoCenter: Phaser.Scale.CENTER_BOTH,
+    width: 1280,
+    height: 720,
+  },
 };
 
 let game: Phaser.Game | null = null;
@@ -427,5 +637,12 @@ ui.play.addEventListener('click', () => {
   startGame();
 });
 
-// Auto-start with defaults for quick iteration
-startGame();
+ui.back.addEventListener('click', () => {
+  if (game) {
+    game.destroy(true);
+    game = null;
+  }
+  ui.hud.style.display = 'none';
+  ui.menu.style.display = 'block';
+  ui.overlay.style.display = 'none';
+});

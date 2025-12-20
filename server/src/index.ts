@@ -67,6 +67,7 @@ class Player {
   inputHistory: InputRecord[] = [];
   positionHistory: Vector2[] = [];
   lastClientTickProcessed = 0;
+  prevButtons: InputRecord['buttons'] = { ...neutralInput.buttons };
   replayGhost?: Ghost;
   possessReady = false;
 
@@ -98,6 +99,7 @@ class Room {
   ghosts: Ghost[] = [];
   round = 0;
   scores: Record<string, number> = {};
+  playersOrdered: string[] = [];
   seed = Date.now();
   obstacles: Obstacle[] = [];
   lastSnapshot = 0;
@@ -111,6 +113,7 @@ class Room {
     const ghost = new Ghost(player);
     this.ghosts.push(ghost);
     if (this.players.length === 2) {
+      this.playersOrdered = this.players.map((p) => p.id);
       this.startMatch();
     }
   }
@@ -150,6 +153,7 @@ class Room {
       p.inputHistory = [];
       p.positionHistory = [];
       p.latestInput = { ...neutralInput };
+      p.prevButtons = { ...neutralInput.buttons };
       p.lastClientTickProcessed = 0;
     });
     this.broadcast({
@@ -260,7 +264,12 @@ class Room {
 
   processButtons(p: Player, buttons: InputRecord['buttons'], dt: number) {
     const now = this.tickCount * (MS_PER_TICK / 1000);
-    if (buttons.shield && now - p.lastShieldRaise > GAME_CONSTANTS.shieldRaiseCd && p.shieldBrokenUntil <= 0 && p.shieldLockUntil <= 0) {
+    if (
+      buttons.shield &&
+      now - p.lastShieldRaise > GAME_CONSTANTS.shieldRaiseCd &&
+      p.shieldBrokenUntil <= 0 &&
+      p.shieldLockUntil <= 0
+    ) {
       if (!p.shieldUp) {
         p.shieldDurability = GAME_CONSTANTS.shieldDurability;
         p.lastShieldRaise = now;
@@ -270,12 +279,14 @@ class Room {
       p.shieldUp = false;
     }
 
-    if (buttons.dash && p.dashCooldown <= 0) {
+    const dashPressed = buttons.dash && !p.prevButtons.dash;
+    if (dashPressed && p.dashCooldown <= 0) {
       p.dashCooldown = GAME_CONSTANTS.dashCooldown;
       p.dashTimer = GAME_CONSTANTS.dashDuration;
     }
 
-    if (buttons.attack && p.attackCooldown <= 0) {
+    const attackPressed = buttons.attack && !p.prevButtons.attack;
+    if (attackPressed && p.attackCooldown <= 0) {
       if (p.charging) {
         // release charge
         p.attackCooldown = GAME_CONSTANTS.attackCooldown;
@@ -291,9 +302,12 @@ class Room {
       p.chargeTime = 0;
     }
 
-    if (buttons.ghost) {
+    const ghostPressed = buttons.ghost && !p.prevButtons.ghost;
+    if (ghostPressed) {
       this.triggerGhost(p);
     }
+
+    p.prevButtons = { ...buttons };
   }
 
   triggerGhost(p: Player) {
@@ -461,6 +475,9 @@ class Room {
     const msg: SnapshotMessage = {
       type: 'snapshot',
       tick: this.tickCount,
+      round: this.round,
+      scores: this.scores,
+      playersOrdered: this.playersOrdered,
       players: this.exportPlayers(),
       ghosts: this.exportGhosts(),
       projectiles: [],

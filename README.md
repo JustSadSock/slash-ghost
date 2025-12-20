@@ -8,7 +8,7 @@ A minimal 2D top-down 1v1 PvP katana brawler with three ghost-driven modes. Buil
   - **Mode A (Loop Echo):** Spawn a 5s replay ghost on demand.
   - **Mode B (Lag Shadow):** Always-on delayed ghost with possession on death.
   - **Mode C (Mana Shadow):** Toggle ghost draining mana.
-- Deterministic server simulation at 60 Hz with 20 Hz snapshots; client-side rendering/interpolation.
+- Deterministic server simulation at 60 Hz with 20 Hz snapshots; client-side prediction + snapshot interpolation for responsive controls.
 - Procedural obstacle layout each round based on a server seed.
 - Netlify-friendly client build and Cloudflared tunnel for exposing the local server.
 
@@ -80,5 +80,6 @@ HUD shows ping, scores, and mode. Server matchmaking pairs two clients into a be
 ## Development notes
 - The server is authoritative and enforces move speed, dash cooldowns, shield/parry timings, and resolves hits/clash.
 - Fixed 60 Hz tick with 20 Hz snapshots; client sends inputs each frame including a monotonic tick number.
-- Protocol version (`PROTOCOL_VERSION`) must match between client and server; mismatches are rejected.
+- Protocol version (`PROTOCOL_VERSION`) is **2** and must match between client and server; mismatches are rejected.
+- Latency handling: the server processes only the latest input per tick, clients predict their own movement locally (then reconcile on authoritative snapshots), and remote players are interpolated from buffered snapshots to avoid rubber-banding.
 
