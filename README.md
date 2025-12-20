@@ -54,11 +54,13 @@ curl http://127.0.0.1:3000/health
 curl https://irgri.uk/health
 ```
 
-## Client deployment (Netlify)
-- Netlify build command: `npm run build`
-- Publish directory: `dist`
-- Set env var `VITE_SERVER_URL` to your tunnel WebSocket URL, e.g. `wss://irgri.uk/ws`.
-- Alternatively pass `?server=wss://...` query param or use the HUD input; preference order is query > localStorage > env > default.
+## Netlify Deploy
+- **Option A (manual):**
+  - Run `npm ci`, then `npm run build -w shared && npm run build -w client`.
+  - Drag-and-drop only the contents of `client/dist` into Netlify Deploys.
+- **Option B (Git):** push this repo with the root `netlify.toml`; Netlify will use the configured build/publish settings without extra UI tweaks.
+- Server URL resolution order: query `?server=...` > `localStorage` override > `import.meta.env.VITE_SERVER_URL` > default `wss://irgri.uk/ws`.
+- To point at a different server, set the `VITE_SERVER_URL` environment variable in Netlify or pass `?server=wss://...` when loading the page.
 
 ## Playing
 1. Start the server locally and cloudflared tunnel using the batch script.

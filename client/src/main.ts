@@ -14,14 +14,25 @@ import {
 
 const DEFAULT_SERVER = 'wss://irgri.uk/ws';
 
+function normalizeServerUrl(url: string, enforceSecure: boolean): string {
+  try {
+    const parsed = new URL(url);
+    if (enforceSecure && parsed.protocol === 'ws:') parsed.protocol = 'wss:';
+    return parsed.toString();
+  } catch {
+    return url;
+  }
+}
+
 function resolveServerUrl(): string {
   const url = new URL(window.location.href);
+  const enforceSecure = url.protocol === 'https:';
   const fromQuery = url.searchParams.get('server');
-  if (fromQuery) return fromQuery;
+  if (fromQuery) return normalizeServerUrl(fromQuery, enforceSecure);
   const stored = localStorage.getItem('serverUrl');
-  if (stored) return stored;
-  if (import.meta.env.VITE_SERVER_URL) return import.meta.env.VITE_SERVER_URL as string;
-  return DEFAULT_SERVER;
+  if (stored) return normalizeServerUrl(stored, enforceSecure);
+  if (import.meta.env.VITE_SERVER_URL) return normalizeServerUrl(import.meta.env.VITE_SERVER_URL as string, enforceSecure);
+  return normalizeServerUrl(DEFAULT_SERVER, enforceSecure);
 }
 
 class DuelScene extends Phaser.Scene {
