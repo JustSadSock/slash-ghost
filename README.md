@@ -8,7 +8,7 @@ A minimal 2D top-down 1v1 PvP katana brawler with three ghost-driven modes. Buil
   - **Mode A (Loop Echo):** Spawn a 5s replay ghost on demand.
   - **Mode B (Lag Shadow):** Always-on delayed ghost with possession on death.
   - **Mode C (Mana Shadow):** Toggle ghost draining mana.
-- Deterministic server simulation at 60 Hz with 20 Hz snapshots; client-side rendering/interpolation.
+- Deterministic server simulation at 60 Hz with 20 Hz snapshots; client-side prediction + snapshot interpolation for responsive controls.
 - Procedural obstacle layout each round based on a server seed.
 - Netlify-friendly client build and Cloudflared tunnel for exposing the local server.
 
@@ -54,11 +54,13 @@ curl http://127.0.0.1:3000/health
 curl https://irgri.uk/health
 ```
 
-## Client deployment (Netlify)
-- Netlify build command: `npm run build`
-- Publish directory: `dist`
-- Set env var `VITE_SERVER_URL` to your tunnel WebSocket URL, e.g. `wss://irgri.uk/ws`.
-- Alternatively pass `?server=wss://...` query param or use the HUD input; preference order is query > localStorage > env > default.
+## Netlify Deploy
+- **Option A (manual):**
+  - Run `npm ci`, then `npm run build -w shared && npm run build -w client`.
+  - Drag-and-drop only the contents of `client/dist` into Netlify Deploys.
+- **Option B (Git):** push this repo with the root `netlify.toml`; Netlify will use the configured build/publish settings without extra UI tweaks.
+- Server URL resolution order: query `?server=...` > `localStorage` override > `import.meta.env.VITE_SERVER_URL` > default `wss://irgri.uk/ws`.
+- To point at a different server, set the `VITE_SERVER_URL` environment variable in Netlify or pass `?server=wss://...` when loading the page.
 
 ## Playing
 1. Start the server locally and cloudflared tunnel using the batch script.
@@ -78,5 +80,6 @@ HUD shows ping, scores, and mode. Server matchmaking pairs two clients into a be
 ## Development notes
 - The server is authoritative and enforces move speed, dash cooldowns, shield/parry timings, and resolves hits/clash.
 - Fixed 60 Hz tick with 20 Hz snapshots; client sends inputs each frame including a monotonic tick number.
-- Protocol version (`PROTOCOL_VERSION`) must match between client and server; mismatches are rejected.
+- Protocol version (`PROTOCOL_VERSION`) is **2** and must match between client and server; mismatches are rejected.
+- Latency handling: the server processes only the latest input per tick, clients predict their own movement locally (then reconcile on authoritative snapshots), and remote players are interpolated from buffered snapshots to avoid rubber-banding.
 

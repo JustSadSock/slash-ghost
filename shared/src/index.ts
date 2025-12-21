@@ -1,4 +1,4 @@
-export const PROTOCOL_VERSION = 1;
+export const PROTOCOL_VERSION = 2;
 
 export type Vector2 = { x: number; y: number };
 
@@ -54,6 +54,7 @@ export type PlayerState = {
   chargeTime: number;
   isDead: boolean;
   ghostEnergy: number;
+  lastClientTickProcessed?: number;
 };
 
 export type GhostState = {
@@ -81,6 +82,9 @@ export type RoundState = {
 export type SnapshotMessage = {
   type: 'snapshot';
   tick: number;
+  round: number;
+  scores: Record<string, number>;
+  playersOrdered?: string[];
   players: PlayerState[];
   ghosts: GhostState[];
   projectiles: never[];
@@ -131,16 +135,16 @@ export type GameMode = 'A' | 'B' | 'C';
 export const GAME_CONSTANTS = {
   tickRate: 60,
   snapshotRate: 20,
-  moveSpeed: 3.4,
+  moveSpeed: 260,
   chargeSlow: 0.55,
   playerRadius: 18,
-  dashSpeed: 9,
+  dashSpeed: 780,
   dashCooldown: 1.4,
-  dashDuration: 0.15,
-  attackCooldown: 0.4,
-  attackRange: 34,
+  dashDuration: 0.13,
+  attackCooldown: 0.35,
+  attackRange: 60,
   attackArc: Math.PI / 3,
-  chargeBonusRange: 18,
+  chargeBonusRange: 35,
   superThreshold: 2.0,
   shieldDurability: 3,
   shieldRaiseCd: 0.45,
