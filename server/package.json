@@ -9,7 +9,7 @@
     "lint": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "slash-ghost-shared": "file:../shared",
+    "@slime-sync/shared": "file:../shared",
     "ws": "^8.17.0",
     "uuid": "^9.0.1"
   },

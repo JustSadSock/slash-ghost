@@ -9,7 +9,7 @@
   },
   "dependencies": {
     "phaser": "^3.70.0",
-    "slash-ghost-shared": "file:../shared"
+    "@slime-sync/shared": "file:../shared"
   },
   "devDependencies": {
     "@types/node": "^20.10.5",

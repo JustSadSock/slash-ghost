@@ -1,5 +1,5 @@
 {
-  "name": "slash-ghost-shared",
+  "name": "@slime-sync/shared",
   "version": "1.0.0",
   "private": false,
   "main": "dist/index.js",

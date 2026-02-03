@@ -39,7 +39,7 @@ import {
   ClientMessage,
   PlayerState,
   GhostState,
-} from "slash-ghost-shared";
+} from "@slime-sync/shared";
 
 interface ClientSession {
   id: string;

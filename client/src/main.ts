@@ -1,5 +1,5 @@
 import Phaser from "phaser";
-import * as Shared from "slash-ghost-shared";
+import * as Shared from "@slime-sync/shared";
 const {
   BASE_MOVE_SPEED,
   GameMode,
