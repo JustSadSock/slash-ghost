@@ -99,10 +99,10 @@ class GameServer {
   };
   private currentMap?: RoundMap;
 
-  start(port = 3000) {
+  start(port = Number(process.env.PORT) || 3000) {
     this.wss.on("connection", (ws) => this.handleConnection(ws));
-    this.server.listen(port, () => {
-      console.log(`[server] listening on port ${port}`);
+    this.server.listen(port, "0.0.0.0", () => {
+      console.log(`[server] listening on port ${port} (0.0.0.0)`);
     });
     const tickMs = 1000 / SERVER_TICK_RATE;
     this.tickInterval = setInterval(() => this.update(tickMs / 1000), tickMs);
